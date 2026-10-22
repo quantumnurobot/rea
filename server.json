@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.quantumnurobot/pakwone-rea",
+  "title": "Pakwone REA",
+  "description": "Pakwone REA: reverse engineer anything with one CLI and MCP server (fork of morluto/rea).",
+  "websiteUrl": "https://github.com/quantumnurobot/pakwone-rea",
+  "repository": {
+    "url": "https://github.com/quantumnurobot/pakwone-rea",
+    "source": "github"
+  },
+  "version": "6.7.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "pakwone-rea",
+      "version": "6.7.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ]
+}
