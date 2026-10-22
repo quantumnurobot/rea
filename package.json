@@ -1,16 +1,16 @@
 {
   "name": "pakwone-rea",
-  "mcpName": "io.github.quantumnurobot/pakwone-rea",
+  "mcpName": "io.github.quantumnurobot/rea",
   "version": "6.7.0",
   "description": "Pakwone REA: reverse engineer anything from your terminal or agent with one CLI and MCP server. A Pakwone Application fork of morluto/rea.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quantumnurobot/pakwone-rea.git"
+    "url": "git+https://github.com/quantumnurobot/rea.git"
   },
-  "homepage": "https://github.com/quantumnurobot/pakwone-rea#readme",
+  "homepage": "https://github.com/quantumnurobot/rea#readme",
   "bugs": {
-    "url": "https://github.com/quantumnurobot/pakwone-rea/issues"
+    "url": "https://github.com/quantumnurobot/rea/issues"
   },
   "keywords": [
     "pakwone",

@@ -57,8 +57,8 @@ Requires **Node.js 22.19+, 24.11+ or 26+** and npm. On Linux, a procps-compatibl
 `ps` must be on your `PATH`.
 
 ```bash
-git clone https://github.com/quantumnurobot/pakwone-rea.git
-cd pakwone-rea
+git clone https://github.com/quantumnurobot/rea.git
+cd rea
 npm install
 npm run build
 npm link            # installs the pakwone-rea command
