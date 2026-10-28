@@ -13,6 +13,9 @@ if exist .git (
 set HUSKY=0
 echo Installing dependencies...
 call npm ci --no-audit --no-fund || (echo If npm mentioned "engine" or "Unsupported engine", update Node.js from https://nodejs.org & goto fail)
+REM Keep lines 1-12 byte-identical: a running copy of this file keeps reading
+REM at the same position after git pull updates it. Add new steps below here.
+node scripts\fetch-windows-native.mjs || goto fail
 echo Building Pakwone REA...
 call npm run build || goto fail
 echo Connecting the REA server for Claude Code in this folder...
