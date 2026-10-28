@@ -1,3 +1,4 @@
+import { types } from "node:util";
 import { z } from "zod";
 
 import {
@@ -6,6 +7,7 @@ import {
   same,
   scalarText,
   segmentsOf,
+  type JsonObject,
   type StateDocument,
   type StateEntity,
   type StateType,
@@ -15,8 +17,16 @@ import {
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import { canonicalJson } from "../../domain/comparisonSemantics.js";
+import { parseExactJson } from "../../domain/exactJsonNumber.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  ownedJsonObjectSchema,
+  jsonValueSchema,
+  jsonValueValidationIssue,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { EnvironmentState } from "./environmentState.js";
@@ -37,37 +47,76 @@ export interface StateContent {
   readonly documents: readonly HeldDocument[];
 }
 
-const fieldsSchema = z.record(z.string(), jsonValueSchema);
-const ordinalSchema = z.number().int().nonnegative();
+/** Check source-owned structural keys before Zod projects the declared fields. */
+const strictStateObject = <Shape extends z.ZodRawShape>(shape: Shape) => {
+  const schema = z.strictObject(shape);
+  return z
+    .unknown()
+    .superRefine((value, context) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        return;
+      if (types.isProxy(value)) {
+        context.addIssue({
+          code: "custom",
+          message: "Expected an ordinary state object",
+        });
+        return;
+      }
+      const keys = Object.getOwnPropertyNames(value).filter(
+        (key) => !Object.hasOwn(schema.shape, key),
+      );
+      if (keys.length > 0)
+        context.addIssue({ code: "unrecognized_keys", keys });
+    })
+    .pipe(schema);
+};
 
-const stateDocumentSchema = z.strictObject({
-  rea_state: z.strictObject({
-    version: z.literal(1),
-    // `data/get` reports these; accepting them back lets its output be loaded unchanged.
-    state_evidence_id: z.string().optional(),
-    types: z.array(jsonValueSchema).optional(),
-    entities: z.array(
-      z.strictObject({
-        type: z.string(),
-        collection: z.string(),
-        id: z.string(),
-        fields: fieldsSchema,
-        view_fields: z
-          .array(z.strictObject({ tool: z.string(), fields: fieldsSchema }))
-          .optional(),
-        record_ordinals: z.array(ordinalSchema).optional(),
-      }),
-    ),
-    documents: z.array(
-      z.strictObject({
-        tool: z.string(),
-        path: z.string(),
-        value: jsonValueSchema,
-        record_ordinal: ordinalSchema.optional(),
-      }),
-    ),
-  }),
-});
+const stateDocumentSchemaFor = (
+  jsonValue: z.ZodType<JsonValue, unknown>,
+  fieldsSchema: z.ZodType<JsonObject, unknown>,
+) => {
+  const ordinalSchema = z.number().int().nonnegative();
+
+  return strictStateObject({
+    rea_state: strictStateObject({
+      version: z.literal(1),
+      // `data/get` reports these; accepting them back lets its output be loaded unchanged.
+      state_evidence_id: z.string().optional(),
+      types: z.array(jsonValue).optional(),
+      entities: z.array(
+        strictStateObject({
+          type: z.string(),
+          collection: z.string(),
+          id: z.string(),
+          fields: fieldsSchema,
+          view_fields: z
+            .array(
+              strictStateObject({ tool: z.string(), fields: fieldsSchema }),
+            )
+            .optional(),
+          record_ordinals: z.array(ordinalSchema).optional(),
+        }),
+      ),
+      documents: z.array(
+        strictStateObject({
+          tool: z.string(),
+          path: z.string(),
+          value: jsonValue,
+          record_ordinal: ordinalSchema.optional(),
+        }),
+      ),
+    }),
+  });
+};
+
+const stateDocumentSchema = stateDocumentSchemaFor(
+  jsonValueSchema,
+  jsonObjectSchema,
+);
+const ownedStateDocumentSchema = stateDocumentSchemaFor(
+  ownedJsonValueSchema,
+  ownedJsonObjectSchema,
+);
 
 type ParsedDocument = z.output<typeof stateDocumentSchema>["rea_state"];
 type ParsedEntity = ParsedDocument["entities"][number];
@@ -103,36 +152,14 @@ const memberProblem = (path: Path): AnalysisInputIssue => {
       );
 };
 
-/** The path of the first `__proto__` member in document order; schema parsing would drop such a member rather than refuse it. */
-const prototypeMemberPath = (root: unknown): Path | undefined => {
-  interface Node {
-    readonly value: unknown;
-    readonly parent: Node | undefined;
-    readonly key: string | number;
-  }
-  const pathOf = (node: Node): (string | number)[] => {
-    const path: (string | number)[] = [];
-    for (let at: Node = node; at.parent !== undefined; at = at.parent)
-      path.push(at.key);
-    return path.reverse();
-  };
-  const pending: Node[] = [{ value: root, parent: undefined, key: "" }];
-  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
-    const { value } = node;
-    if (typeof value !== "object" || value === null) continue;
-    const array = Array.isArray(value);
-    if (!array && Object.hasOwn(value, "__proto__"))
-      return [...pathOf(node), "__proto__"];
-    const entries = Object.entries(value);
-    for (let index = entries.length - 1; index >= 0; index -= 1)
-      pending.push({
-        value: entries[index]![1],
-        parent: node,
-        key: array ? index : entries[index]![0],
-      });
-  }
-  return undefined;
-};
+/** Whether `data/add` accepts a value as a `fields` member or a document's `value`: bounded nesting and numbers exact as `data/get` writes them. */
+export const isLoadableValue = (value: JsonValue): boolean =>
+  jsonValueValidationIssue(value) === undefined &&
+  parseExactJson(JSON.stringify(value)) !== undefined;
+
+/** The first member of an object `data/add` would refuse as `fields`, if any: one whose value does not load. */
+export const unloadableMember = (object: JsonObject): string | undefined =>
+  Object.keys(object).find((member) => !isLoadableValue(object[member]!));
 
 /** The first schema problem, located without naming the caller's data. */
 const schemaProblem = (
@@ -148,6 +175,15 @@ const schemaProblem = (
     first.reason === "unknown_argument"
   )
     return memberProblem(first.path);
+  if (
+    content >= 0 &&
+    first.path[content] === "fields" &&
+    first.reason === "invalid_value"
+  )
+    return problem(
+      first.path.slice(0, content + 1),
+      "holds a value that is not exactly representable JSON",
+    );
   if (first.reason === "missing_argument")
     return { ...first, message: "is required" };
   return {
@@ -365,18 +401,17 @@ const heldContent = (
 export const parseStateDocument = (
   state: EnvironmentState,
   value: unknown,
+  owned = false,
 ): Result<StateContent, AnalysisInputError> => {
-  const prototype = prototypeMemberPath(value);
-  const parsed = stateDocumentSchema.safeParse(value);
+  const parsed = (
+    owned ? ownedStateDocumentSchema : stateDocumentSchema
+  ).safeParse(value);
   const initial = new Map(
     state.entities.map((entity) => [entityKey(entity), entity]),
   );
-  const issue =
-    prototype !== undefined
-      ? memberProblem(prototype)
-      : parsed.success
-        ? contentProblem(state, parsed.data.rea_state, initial)
-        : schemaProblem(parsed.error.issues, value);
+  const issue = parsed.success
+    ? contentProblem(state, parsed.data.rea_state, initial)
+    : schemaProblem(parsed.error.issues, value);
   if (issue !== undefined || !parsed.success)
     return err(
       new AnalysisInputError(

@@ -1,3 +1,4 @@
+import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -6,6 +7,32 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+
+const closeFailureControl = vi.hoisted(() => ({
+  failure: null as Error | null,
+}));
+
+vi.mock("../http/serveStreamableHttp.js", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../http/serveStreamableHttp.js")>();
+  return {
+    ...original,
+    serveStreamableHttp: async (
+      ...args: Parameters<typeof original.serveStreamableHttp>
+    ) => {
+      const served = await original.serveStreamableHttp(...args);
+      return {
+        ...served,
+        close: async () => {
+          await served.close();
+          const failure = closeFailureControl.failure;
+          closeFailureControl.failure = null;
+          if (failure !== null) throw failure;
+        },
+      };
+    },
+  };
+});
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -31,11 +58,7 @@ import {
   type ServedEnvironment,
   type ServeEnvironmentOptions,
 } from "./serveEnvironment.js";
-import {
-  DEFAULT_STATE_INTAKE,
-  STATE_INTAKE_LIMIT_BYTES,
-  type StateIntake,
-} from "./stateIntake.js";
+import { DEFAULT_STATE_INTAKE, type StateIntake } from "./stateIntake.js";
 
 const { source, state } = environmentStateServeInputs();
 
@@ -222,7 +245,7 @@ describe("state data plane", () => {
       },
     });
     expect(loginOf(plane.store)).toBe("probe");
-    // Values parsing would alter are refused where they sit, never rounded or turned into a prototype.
+    // Numbers parsing or serialization would alter are refused where they sit.
     const body = JSON.stringify({
       jsonrpc: "2.0",
       id: 2,
@@ -233,7 +256,6 @@ describe("state data plane", () => {
       '"login":9007199254740993',
       // Exact in this spelling, but data/get would write it as digits it could not load again.
       '"login":1e20',
-      '"__proto__":{"polluted":true},"login":"renamed"',
     ]) {
       const reply = await plane.post(
         body.replace('"login":"renamed"', altered),
@@ -244,10 +266,43 @@ describe("state data plane", () => {
           data: { path: expect.stringMatching(/\/fields$/u) },
         },
       });
-      expect(JSON.stringify(reply.json)).not.toContain("polluted");
     }
     expect(loginOf(plane.store)).toBe("probe");
   });
+});
+
+it("preserves arbitrary own data keys in inline and encoded file parts", async () => {
+  const plane = dataPlane();
+  const initial = renamedDocument();
+  const original = initial.rea_state.entities[0]!;
+  const members = JSON.parse(
+    '{"__proto__":{"constructor":0},"toString":false}',
+  );
+  const entity = { ...original, fields: { ...original.fields, ...members } };
+  const document = {
+    rea_state: {
+      ...initial.rea_state,
+      entities: [entity, ...initial.rea_state.entities.slice(1)],
+    },
+  };
+  for (const part of [
+    { kind: "data", data: document },
+    {
+      kind: "file",
+      file: {
+        bytes: Buffer.from(JSON.stringify(document)).toString("base64"),
+      },
+    },
+  ]) {
+    await expect(plane.add(part)).resolves.toMatchObject({ result: {} });
+    const retained = plane.store.entity(
+      entity.type,
+      entity.collection,
+      entity.id,
+    )!;
+    expect(Object.hasOwn(retained.fields, "__proto__")).toBe(true);
+    expect(retained.fields).toEqual(entity.fields);
+  }
 });
 
 describe("state data plane intake", () => {
@@ -672,11 +727,62 @@ describe("state data plane response budget", () => {
             typeof value === "object" &&
             value !== null &&
             "result" in value &&
+            typeof (value as { result?: unknown }).result === "object" &&
             (value as { id?: unknown }).id === 3,
         ),
       ).toBe(false);
     } finally {
       stringify.mockRestore();
+    }
+  });
+});
+
+describe("repeated state reads", () => {
+  it("reuses the encoded size of a state for refused repeated data/get calls", async () => {
+    const plane = dataPlane();
+    const document = renamedDocument();
+    const large = {
+      rea_state: {
+        ...document.rea_state,
+        entities: document.rea_state.entities.map((entity) =>
+          entity.type === "/api/users" && entity.id === "2"
+            ? {
+                ...entity,
+                fields: { ...entity.fields, large: "x".repeat(1024 * 1024) },
+              }
+            : entity,
+        ),
+      },
+    };
+    await plane.add({ kind: "data", data: large });
+    const fields = plane.store
+      .snapshot()
+      .rea_state.entities.find((entity) => entity.id === "2")?.fields;
+    if (fields === undefined) throw new Error("Expected the loaded entity");
+
+    const originalKeys = Object.keys;
+    let fieldEnumerations = 0;
+    const keys = vi.spyOn(Object, "keys").mockImplementation((value) => {
+      if (value === fields) fieldEnumerations += 1;
+      return originalKeys(value);
+    });
+    try {
+      const batch = await plane.post(
+        Array.from({ length: 100 }, (_, index) => ({
+          jsonrpc: "2.0",
+          id: index + 1,
+          method: "data/get",
+        })),
+      );
+      expect(
+        (batch.json as { error?: unknown }[]).filter((reply) => reply.error),
+      ).not.toHaveLength(0);
+      expect(fieldEnumerations).toBeLessThan(65);
+      expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
+        MAX_RPC_RESPONSE_BYTES,
+      );
+    } finally {
+      keys.mockRestore();
     }
   });
 });
@@ -773,7 +879,71 @@ const withClient = async (
   }
 };
 
+it("loads a padded inline state file and keeps the RPC result compact", async () => {
+  const environment = await serveState({ source, state });
+  const document = JSON.stringify(renamedDocument()).padEnd(
+    2 * 1024 * 1024,
+    " ",
+  );
+  const added = await fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "data/add",
+      params: {
+        parts: [
+          {
+            kind: "file",
+            file: { bytes: Buffer.from(document).toString("base64") },
+          },
+        ],
+      },
+    }),
+  });
+  expect(added.status).toBe(200);
+  const reply = await added.text();
+  expect(JSON.parse(reply)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+  expect(Buffer.byteLength(reply)).toBeLessThan(128);
+  await withClient(environment, async (client) => {
+    const read = await client.callTool({
+      name: "get_users_by_id",
+      arguments: { id: "2" },
+    });
+    expect(read.isError).toBeFalsy();
+    expect(read.structuredContent).toMatchObject({
+      body: { login: "renamed" },
+    });
+  });
+  await expect(environment.close()).resolves.toBeUndefined();
+});
+
 describe("serveEnvironment with a state", () => {
+  it("replays safe non-GET methods with the recorded-view reason", async () => {
+    const environment = await serveState(
+      environmentStateServeInputs(
+        environmentStateServeFixture(
+          timedCaptureEvidence([
+            ["GET", "/api/items", [{ id: 1 }]],
+            ["HEAD", "/api/items"],
+            ["OPTIONS", "/api/items", { allow: "GET, HEAD, OPTIONS" }],
+            ["TRACE", "/api/items", { trace: true }],
+          ]),
+        ),
+      ),
+    );
+    await withClient(environment, async (client) => {
+      for (const name of ["head_items", "options_items", "trace_items"]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          state: { source: "recording", reason: "method-replay" },
+        });
+      }
+    });
+  });
+
   it("declares the data plane, serves read tools from the state and reflects data/add in the next answer", async () => {
     const environment = await serveState({ source, state });
     const url = new URL(environment.url);
@@ -883,15 +1053,64 @@ describe("serveEnvironment with a state", () => {
     await expect(
       add({ kind: "data", data: renamedDocument() }),
     ).resolves.toMatchObject({ result: {} });
-    await expect(environment.close()).rejects.toBeInstanceOf(
-      ArtifactResourceRetryFailure,
-    );
+    await expect(environment.close()).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      diagnostics: { cleanup_stages: ["state-files"] },
+      cause: expect.any(ArtifactResourceRetryFailure),
+      cleanupIncomplete: true,
+    });
     expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
     failing = false;
     await expect(environment.close()).resolves.toBeUndefined();
     expect(owners[0]?.handle.fd).toBe(-1);
   });
+});
 
+describe("serveEnvironment cleanup retries", () => {
+  it("attempts state-file cleanup after listener failure and keeps both failures retryable", async () => {
+    const environment = await serveState({ source, state });
+    const uri = await renamedStateUri();
+    let failing = true;
+    const owners = failFirstFileClose(() => failing);
+    const response = await fetch(
+      new URL(ENVIRONMENT_RPC_PATH, environment.url),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(addByUri(1, uri)),
+      },
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: -32000,
+        message: expect.stringContaining("could not be closed"),
+      },
+    });
+
+    const listenerFailure = new Error("injected listener cleanup failure");
+    closeFailureControl.failure = listenerFailure;
+    await expect(environment.close()).rejects.toSatisfy((cause: unknown) => {
+      if (!(cause instanceof Error) || !(cause.cause instanceof AggregateError))
+        return false;
+      expect(cause).toMatchObject({
+        _tag: "AnalysisOutputError",
+        diagnostics: { cleanup_stages: ["http-server", "state-files"] },
+        cleanupIncomplete: true,
+      });
+      return (
+        cause.cause.errors[0] === listenerFailure &&
+        cause.cause.errors[1] instanceof ArtifactResourceRetryFailure
+      );
+    });
+    expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+
+    failing = false;
+    await expect(environment.close()).resolves.toBeUndefined();
+    expect(owners[0]?.handle.fd).toBe(-1);
+  });
+});
+
+describe("serveEnvironment with a state", () => {
   it("serves query POSTs from their recordings and leaves state-changing writes out", async () => {
     const environment = await serveState(
       environmentStateServeInputs(

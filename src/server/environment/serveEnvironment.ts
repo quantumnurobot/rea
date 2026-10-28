@@ -1,3 +1,5 @@
+import type { HttpHostname } from "../../domain/httpHostname.js";
+import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import {
   DEFAULT_MAX_REQUEST_BODY_SIZE,
   fromJsonSchema,
@@ -16,7 +18,7 @@ import {
 import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
-} from "../../application/environment/environmentStateAnswer.js";
+} from "../../application/environment/environmentToolAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
@@ -27,7 +29,11 @@ import {
 } from "../../application/environment/environmentTools.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { safeParseJson } from "../../domain/safeJson.js";
-import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisOutputError,
+  type AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { StreamableHttpListenError } from "../http/streamableHttpListenError.js";
 import { ok, type Result } from "../../domain/result.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
@@ -47,7 +53,6 @@ import {
   DEFAULT_STATE_INTAKE,
   exactJsonReviver,
   SERVER_ERROR,
-  STATE_INTAKE_LIMIT_BYTES,
   type RpcError,
   type StateFetcher,
 } from "./stateIntake.js";
@@ -115,6 +120,7 @@ export const createEnvironmentMcpServer = (
       {
         description: definition.description,
         inputSchema: fromJsonSchema<ReplayArguments>(definition.inputSchema),
+        annotations: definition.annotations,
       },
       (args): CallToolResult => {
         const replayed = answer(definition.tool, args);
@@ -193,6 +199,65 @@ const startRpc = (
   );
 };
 
+interface CachedStateReplySize {
+  readonly types: unknown;
+  readonly documents: unknown;
+  readonly bytes: number;
+}
+
+// Repeated `data/get` snapshots have fresh wrappers but share the installed
+// state's member arrays. The request-scoped cache avoids retaining stale sizes.
+const cachedStateReplyResultBytes = (
+  stateReplySizes: WeakMap<object, CachedStateReplySize>,
+  reply: RpcReply,
+): number | undefined => {
+  if (!("result" in reply) || !isRecord(reply.result)) return undefined;
+  const parts = reply.result.parts;
+  if (!Array.isArray(parts) || parts.length !== 1 || !isRecord(parts[0]))
+    return undefined;
+  const data = parts[0].data;
+  if (!isRecord(data) || !isRecord(data.rea_state)) return undefined;
+  const { types, entities, documents } = data.rea_state;
+  if (!Array.isArray(entities) || !Array.isArray(documents)) return undefined;
+  const cached = stateReplySizes.get(entities);
+  return cached !== undefined &&
+    cached.types === types &&
+    cached.documents === documents
+    ? cached.bytes
+    : undefined;
+};
+
+const rememberStateReplyResultBytes = (
+  stateReplySizes: WeakMap<object, CachedStateReplySize>,
+  reply: RpcReply,
+  replyBytes: number,
+): void => {
+  if (!("result" in reply) || !isRecord(reply.result)) return;
+  const parts = reply.result.parts;
+  if (!Array.isArray(parts) || parts.length !== 1 || !isRecord(parts[0]))
+    return;
+  const data = parts[0].data;
+  if (!isRecord(data) || !isRecord(data.rea_state)) return;
+  const { types, entities, documents } = data.rea_state;
+  if (!Array.isArray(entities) || !Array.isArray(documents)) return;
+  // A one-character string marks the result slot. Removing its compact JSON
+  // envelope yields the exact result size, independent of the RPC id.
+  const markerBytes = Buffer.byteLength(
+    JSON.stringify({ jsonrpc: "2.0", id: reply.id, result: "x" }),
+    "utf8",
+  );
+  const bytes = replyBytes - markerBytes + 3;
+  stateReplySizes.set(entities, { types, documents, bytes });
+};
+
+const replyBytesFor = (reply: RpcReply, resultBytes: number): number =>
+  resultBytes +
+  Buffer.byteLength(
+    JSON.stringify({ jsonrpc: "2.0", id: reply.id, result: "x" }),
+    "utf8",
+  ) -
+  3;
+
 const overBudget = (replyBytes: number): RpcError => ({
   code: SERVER_ERROR,
   message: `the reply would take this response past its ${String(MAX_RPC_RESPONSE_BYTES)}-byte budget; the call ran, so repeat a read in another request`,
@@ -224,11 +289,30 @@ const replyEncoder = (
   const refusals = messages.filter(expectsReply).map(refusalBytes);
   let reserved = refusals.reduce((sum, bytes) => sum + bytes, 0);
   let used = framed ? 2 + Math.max(0, refusals.length - 1) : 0;
+  const stateReplySizes = new WeakMap<object, CachedStateReplySize>();
   let index = 0;
   return (reply) => {
     reserved -= refusals[index] ?? 0;
     index += 1;
     const room = MAX_RPC_RESPONSE_BYTES - used - reserved;
+    const cachedResultBytes = cachedStateReplyResultBytes(
+      stateReplySizes,
+      reply,
+    );
+    const knownBytes =
+      cachedResultBytes === undefined
+        ? undefined
+        : replyBytesFor(reply, cachedResultBytes);
+    if (knownBytes !== undefined && knownBytes > room) {
+      const refused = JSON.stringify({
+        jsonrpc: "2.0",
+        id: reply.id,
+        error: overBudget(knownBytes),
+      });
+      const refusedBytes = Buffer.byteLength(refused, "utf8");
+      used += refusedBytes;
+      return refused;
+    }
     const parts: string[] = [];
     let bytes = 0;
     for (const part of bufferedJsonParts(jsonParts(reply))) {
@@ -236,9 +320,13 @@ const replyEncoder = (
       if (bytes <= room) parts.push(part);
     }
     if (bytes <= room) {
+      if (cachedResultBytes === undefined)
+        rememberStateReplyResultBytes(stateReplySizes, reply, bytes);
       used += bytes;
       return parts.join("");
     }
+    if (cachedResultBytes === undefined)
+      rememberStateReplyResultBytes(stateReplySizes, reply, bytes);
     const refused = JSON.stringify({
       jsonrpc: "2.0",
       id: reply.id,
@@ -339,6 +427,8 @@ export interface ServeEnvironmentOptions {
   readonly source: EnvironmentSource;
   readonly host: string;
   readonly port: number;
+  /** Operator-declared Host/Origin names; a non-loopback bind refuses to serve without them. */
+  readonly allowedHosts?: readonly HttpHostname[];
   readonly signal?: AbortSignal;
   /** Served name; defaults to the manifest's environment name. */
   readonly environmentName?: string;
@@ -356,6 +446,14 @@ export interface ServedEnvironment extends StreamableHttpServer {
   readonly card: EnvironmentCard;
 }
 
+interface EnvironmentShutdownOwner {
+  readonly cleanupResources: readonly string[];
+  close(): Promise<void>;
+}
+
+// A failed shutdown must retain the same staged HTTP and state-file owners.
+const retainedEnvironmentShutdowns = new Set<EnvironmentShutdownOwner>();
+
 /** Serve one manifest as an agent environment until closed. */
 export const serveEnvironment = async (
   options: ServeEnvironmentOptions,
@@ -367,7 +465,7 @@ export const serveEnvironment = async (
     options.state === undefined
       ? undefined
       : new EnvironmentStateStore(options.state);
-  const catalog = servedCatalog(source, store !== undefined, name);
+  const catalog = servedCatalog(source, options.state, name);
   if (!catalog.ok) return catalog;
   const { tools, dataPlane } = catalog.value;
   const card = environmentCard(name, tools, dataPlane);
@@ -382,6 +480,9 @@ export const serveEnvironment = async (
   const served = await serveStreamableHttp({
     host,
     port,
+    ...(options.allowedHosts === undefined
+      ? {}
+      : { allowedHosts: options.allowedHosts }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     createMcpServer: () => createEnvironmentMcpServer(name, tools, answer),
     routes: environmentRoutes(
@@ -409,6 +510,87 @@ export const serveEnvironment = async (
       options.onerror?.(error);
     },
   });
+  let httpClosePending = false;
+  let stateClosePending = false;
+  let closing: Promise<void> | undefined;
+  const shutdownFailures = new Set<AnalysisError>();
+  const owner: EnvironmentShutdownOwner = {
+    get cleanupResources() {
+      const stateResources = stateFiles.cleanupResources;
+      return [
+        ...(httpClosePending ? [served.url] : []),
+        ...(stateClosePending
+          ? stateResources.length > 0
+            ? stateResources
+            : ["environment state-file scope"]
+          : []),
+      ];
+    },
+    close: () => {
+      if (closing !== undefined) return closing;
+      const attempt = (async () => {
+        stop();
+        const failures: {
+          readonly stage: "http-server" | "state-files";
+          readonly cause: unknown;
+        }[] = [];
+        try {
+          await served.close();
+          httpClosePending = false;
+        } catch (cause: unknown) {
+          httpClosePending = true;
+          failures.push({ stage: "http-server", cause });
+        }
+        try {
+          await stateFiles.close();
+          stateClosePending = false;
+        } catch (cause: unknown) {
+          stateClosePending = true;
+          failures.push({ stage: "state-files", cause });
+        }
+        if (failures.length > 0) {
+          retainedEnvironmentShutdowns.add(owner);
+          const failure = new AnalysisOutputError(
+            "environment-serve",
+            failures
+              .map(
+                ({ stage, cause }) =>
+                  `${stage}: ${cause instanceof Error ? cause.message : "Non-Error cleanup failure (original cause retained)."}`,
+              )
+              .join("; "),
+            {
+              cause:
+                failures.length === 1
+                  ? failures[0]?.cause
+                  : new AggregateError(
+                      failures.map(({ cause }) => cause),
+                      "Environment server and state-file cleanup both failed",
+                    ),
+              diagnostics: {
+                cleanup_stages: failures.map(({ stage }) => stage),
+              },
+              cleanup: {
+                reason: "Environment shutdown remains incomplete.",
+                resources: owner.cleanupResources,
+              },
+              remediationAction:
+                "Keep this REA process available for cleanup. Confirm the reported resources are released before starting a replacement environment server.",
+            },
+          ).bindCleanupResourceOwner(owner);
+          shutdownFailures.add(failure);
+          throw failure;
+        }
+        retainedEnvironmentShutdowns.delete(owner);
+        for (const failure of shutdownFailures) failure.resolveCleanup();
+        shutdownFailures.clear();
+      })();
+      closing = attempt;
+      void attempt.catch(() => {
+        if (closing === attempt) closing = undefined;
+      });
+      return attempt;
+    },
+  };
   return ok({
     ...served,
     card,
@@ -416,10 +598,6 @@ export const serveEnvironment = async (
       stop();
       return served.prepareShutdown();
     },
-    close: async () => {
-      stop();
-      await served.close();
-      await stateFiles.close();
-    },
+    close: owner.close,
   });
 };

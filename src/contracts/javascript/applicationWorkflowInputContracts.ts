@@ -6,7 +6,7 @@ import { sourceToBundleViewRequestSchema } from "../../domain/analysisView/sourc
 import { evidenceSchema } from "../../domain/evidence.js";
 import { z } from "zod";
 
-import { evidenceInputSchema } from "../evidenceInputContracts.js";
+import { evidenceInputSchema } from "../../domain/evidenceReference.js";
 import { compareApplicationVersionsInputSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
@@ -17,6 +17,7 @@ const traceApplicationFeatureFacts = {
   native_observations:
     traceApplicationFeatureInputSchema.shape.native_observations,
   seed: traceApplicationFeatureInputSchema.shape.seed,
+  semantic_page: traceApplicationFeatureInputSchema.shape.semantic_page,
   direction: traceApplicationFeatureInputSchema.shape.direction,
 } as const;
 

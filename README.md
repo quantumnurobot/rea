@@ -53,7 +53,7 @@ The full target table, with every requirement and guide link, is in
 
 ## Quick start (from source)
 
-Requires **Node.js 22.19+, 24.11+ or 26+** and npm. On Linux, a procps-compatible
+Requires **Node.js 22.23.4+, 24.22.1+ or 26.12.1+** and npm. On Linux, a procps-compatible
 `ps` must be on your `PATH`.
 
 ```bash
@@ -78,6 +78,22 @@ Restart the agent afterward. The original `rea` command name also works.
 > `pakwone-rea setup` registers the server as `npx -y pakwone-rea@<version> mcp`,
 > so it only works once this fork is published to npm under the name `pakwone-rea`.
 > Until then, use the manual registration above.
+
+### Windows: one-click setup
+
+Clone the repo, then double-click **`setup-windows.cmd`**. It updates from GitHub,
+installs, builds, and writes `.mcp.json` so Claude Code opened in this folder
+connects to the local REA server.
+
+On macOS or Linux, `install.sh` does the same from source.
+
+### The Pakwone feature-teardown team
+
+Open the folder in Claude Code and run **`/feature-teardown`**. The lead skill
+walks a target app through six agents in `.claude/agents/`:
+recon-scout → static-analyst and runtime-observer → spec-writer →
+feature-builder → qa-verifier. The builder works only from the written spec
+(clean-room), and working files go in `work/`.
 
 ### Ask your agent
 
