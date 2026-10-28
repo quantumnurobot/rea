@@ -95,12 +95,38 @@ const loadSource = (url, context, nextLoad) => {
   return {
     ...loaded,
     format,
-    source: nodeModule.stripTypeScriptTypes(source, {
-      mode: "transform",
-      sourceMap: true,
-      sourceUrl: url,
-    }),
+    source: transformTypeScript(source, url),
   };
+};
+
+// Some Node.js builds accept only `mode: "strip"` in stripTypeScriptTypes,
+// which cannot lower enums, namespaces or parameter properties. On those
+// builds, transform with the esbuild already installed for the build instead.
+let esbuildTransformSync;
+const transformTypeScript = (source, url) => {
+  if (esbuildTransformSync === undefined) {
+    try {
+      return nodeModule.stripTypeScriptTypes(source, {
+        mode: "transform",
+        sourceMap: true,
+        sourceUrl: url,
+      });
+    } catch (cause) {
+      if (errorCode(cause) !== "ERR_INVALID_ARG_VALUE") throw cause;
+      try {
+        ({ transformSync: esbuildTransformSync } = nodeModule.createRequire(
+          import.meta.url,
+        )("esbuild"));
+      } catch {
+        throw cause;
+      }
+    }
+  }
+  return esbuildTransformSync(source, {
+    loader: "ts",
+    sourcemap: "inline",
+    sourcefile: url,
+  }).code;
 };
 
 /**
