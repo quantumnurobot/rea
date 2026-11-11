@@ -95,6 +95,9 @@ recon-scout → static-analyst and runtime-observer → spec-writer →
 feature-builder → qa-verifier. The builder works only from the written spec
 (clean-room), and working files go in `work/`.
 
+Prepared case briefs live in [`cases/`](cases/). First case:
+[LuxAlgo](cases/luxalgo.md).
+
 ### Ask your agent
 
 ```text
