@@ -70,11 +70,13 @@ or line-by-line descriptions of it. The feature-builder sees the spec only.
 Everything built from this case goes into **Pakwone Auto Trading** (PWE Auto
 Trading, the platform behind <https://pakwone.com>).
 
+- **Build folder:** `C:\pakwone` on the user's Windows PC. Create it if it is
+  missing. `feature-builder` writes Pakwone Auto Trading code here and nowhere
+  else.
 - **Repository:** <https://github.com/quantumnurobot/PWE> ("PakWonE Auto 3D
-  Trading"). On 2026-11-11 it held only a README. If the live platform code is
-  kept somewhere else, ask the user for that location before `feature-builder`
-  starts, and update this line.
-- **Stack:** UNKNOWN until the platform code is located. Do not pick one.
+  Trading") is the GitHub home for that folder. On 2026-11-11 it held only a
+  README.
+- **Stack:** UNKNOWN. Ask the user before the first build; do not pick one.
 
 Rules every spec for this case must follow, so the result fits the platform:
 
