@@ -76,7 +76,10 @@ Trading, the platform behind <https://pakwone.com>).
 - **Repository:** <https://github.com/quantumnurobot/PWE> ("PakWonE Auto 3D
   Trading") is the GitHub home for that folder. On 2026-11-11 it held only a
   README.
-- **Stack:** UNKNOWN. Ask the user before the first build; do not pick one.
+- **Stack:** Python 3.10+, standard library first. Add a dependency only when
+  a feature needs it.
+- **Built so far:** previous high/low levels across timeframes
+  (`pakwone/levels.py`, spec in `specs/previous-levels.md`).
 
 Rules every spec for this case must follow, so the result fits the platform:
 
