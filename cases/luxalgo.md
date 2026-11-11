@@ -65,24 +65,51 @@ pages and observed behaviour** (what the indicator shows for given price data),
 described in Pakwone's own words. The spec must not contain LuxAlgo source code
 or line-by-line descriptions of it. The feature-builder sees the spec only.
 
+## Build target: Pakwone Auto Trading
+
+Everything built from this case goes into **Pakwone Auto Trading** (PWE Auto
+Trading, the platform behind <https://pakwone.com>).
+
+- **Repository:** <https://github.com/quantumnurobot/PWE> ("PakWonE Auto 3D
+  Trading"). On 2026-11-11 it held only a README. If the live platform code is
+  kept somewhere else, ask the user for that location before `feature-builder`
+  starts, and update this line.
+- **Stack:** UNKNOWN until the platform code is located. Do not pick one.
+
+Rules every spec for this case must follow, so the result fits the platform:
+
+1. **No chart analysis.** Outputs are statuses, levels and events the trading
+   logic can read. Charts only display status.
+2. **Markets:** crypto, forex and futures. Crypto first.
+3. **Timeframes:** month, week, day, 4 hr, 1 hr and 15 min, worked from high to
+   low.
+4. **Feeds the Pakwone Code, never replaces it.** A feature may add an input or
+   a filter to the G/R strength rating and the GR = long / RG = short rule. It
+   must not introduce its own buy/sell signal.
+5. **Paper trading first.** Each feature ships with paper-trade statistics
+   before it can touch live orders.
+6. **Usable by the desk agents.** Expose each feature as a plain function or
+   endpoint the "Eugenius" assistant and the per-market agents can call.
+
 ## Suggested first features
 
 Pick one per teardown run. Each is a general trading concept with a Library
 concept page, so a spec can be written without relying on LuxAlgo's code.
 
-| Feature | Why it fits Pakwone |
+| Feature | Where it lands in Pakwone Auto Trading |
 | --- | --- |
-| Previous high/low levels across timeframes | Matches the planned price positioning against month, week, day, 4 hr, 1 hr and 15 min highs and lows |
-| Liquidity sweeps | Rule-based event on those same highs and lows |
-| Market structure (break of structure / change of character) | Rule-based trend state that can be shown as a status, not a chart study |
-| Prop Firm Sim (MIT) | Monte Carlo pass-odds maths; reusable for paper-trading statistics |
-| LuxAlgo MCP server (MIT) | Pattern for exposing Pakwone tools to AI agents |
+| Previous high/low levels across timeframes | The planned Renko price positioning against month, week, day, 4 hr, 1 hr and 15 min highs and lows |
+| Liquidity sweeps | Event flag on those same levels; a candidate filter on GR/RG entries |
+| Market structure (break of structure / change of character) | Per-timeframe trend status shown next to the G/R rating |
+| Prop Firm Sim (MIT) | Monte Carlo maths for the paper-trading statistics |
+| Broker SDK and Trade Relay (MIT) | Order routing and webhook patterns for automatic buys and sells |
+| LuxAlgo MCP server (MIT) | Pattern for letting the desk agents call Pakwone tools |
 
 ## How to run
 
 1. Open this folder in Claude Code.
 2. Run `/feature-teardown` and say: "Use `cases/luxalgo.md`. Feature: <one from
-   the list>. Build target: <Pakwone repo and stack>."
+   the list>." The build target is Pakwone Auto Trading, as set above.
 3. For open-source parts, clone the repository into `work/luxalgo/src/` and let
    `recon-scout` and `static-analyst` read it directly. REA's binary tools are
    not needed for source that is already published.
