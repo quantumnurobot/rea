@@ -7,3 +7,4 @@ This folder is Pakwone REA (fork of morluto/rea) plus the Pakwone feature-teardo
 - To study a feature and build Pakwone's own version, use the `/feature-teardown` skill. Team agents: recon-scout, static-analyst, runtime-observer, spec-writer, feature-builder, qa-verifier.
 - Only analyse software the user owns, is licensed to analyse, or is analysing for interoperability. Builds are clean-room: the builder works from `work/<target>/04-spec.md` only.
 - Teardown working files live in `work/` (git-ignored).
+- For a quick look that does not need the MCP server, use the `/leanrea` skill (third-party, MIT; see `third_party/leanrea/`). It runs plain command-line tools and its examples assume macOS.

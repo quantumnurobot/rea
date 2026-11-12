@@ -37,16 +37,16 @@ IDA and JADX on the agent's behalf, through one MCP server and one CLI.
 
 ## What you can analyse
 
-| Target | What comes back |
-| --- | --- |
-| Native binaries | Pseudocode, assembly, strings, symbols, calls and references (Ghidra, Hopper or IDA) |
-| JavaScript / Electron apps | Modules, imports, source maps, routes, IPC and native add-ons |
-| .NET assemblies | Metadata, CIL instructions and native dependencies (static, no extra tools) |
-| Android APKs | Manifest, classes, decompiled methods and references (JADX + JDK) |
-| Websites | Page structure, scripts, network observations and screenshots (Chrome-family browser) |
-| Network captures | Requests, responses and payloads from HAR, SAZ or pcap files |
-| Firmware | Regions, extraction results and native-analysis handoffs (Binwalk / Unblob on Linux) |
-| Go, Rust, Flutter, PyInstaller, WASM, Godot, Unity IL2CPP | Build provenance, embedded metadata and extracted contents |
+| Target                                                    | What comes back                                                                       |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Native binaries                                           | Pseudocode, assembly, strings, symbols, calls and references (Ghidra, Hopper or IDA)  |
+| JavaScript / Electron apps                                | Modules, imports, source maps, routes, IPC and native add-ons                         |
+| .NET assemblies                                           | Metadata, CIL instructions and native dependencies (static, no extra tools)           |
+| Android APKs                                              | Manifest, classes, decompiled methods and references (JADX + JDK)                     |
+| Websites                                                  | Page structure, scripts, network observations and screenshots (Chrome-family browser) |
+| Network captures                                          | Requests, responses and payloads from HAR, SAZ or pcap files                          |
+| Firmware                                                  | Regions, extraction results and native-analysis handoffs (Binwalk / Unblob on Linux)  |
+| Go, Rust, Flutter, PyInstaller, WASM, Godot, Unity IL2CPP | Build provenance, embedded metadata and extracted contents                            |
 
 The full target table, with every requirement and guide link, is in
 [UPSTREAM_README.md](UPSTREAM_README.md#what-you-can-analyze) and the [docs](docs/) folder.
@@ -97,6 +97,24 @@ feature-builder → qa-verifier. The builder works only from the written spec
 
 Prepared case briefs live in [`cases/`](cases/). First case:
 [LuxAlgo](cases/luxalgo.md).
+
+### The leanrea fast path
+
+For a quick answer, run **`/leanrea`** in Claude Code instead of the full team:
+
+```text
+/leanrea How does the search feature in Foo.app work? Show the evidence.
+```
+
+[leanrea](https://github.com/aicodeking/leanrea) is a single skill file by
+AICodeKing (MIT). It does not call the REA MCP server. The agent runs ordinary
+command-line tools itself, which uses far less context on small jobs. Use
+`/feature-teardown` and the MCP server when you need Ghidra-level depth or a
+clean-room rebuild.
+
+Most of its ready-made commands are written for macOS. On Windows the
+JavaScript, Electron, Go, Android and SQLite routes work from Git Bash or WSL;
+the Mach-O routes do not apply.
 
 ### Ask your agent
 
