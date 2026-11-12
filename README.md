@@ -112,9 +112,10 @@ command-line tools itself, which uses far less context on small jobs. Use
 `/feature-teardown` and the MCP server when you need Ghidra-level depth or a
 clean-room rebuild.
 
-Most of its ready-made commands are written for macOS. On Windows the
-JavaScript, Electron, Go, Android and SQLite routes work from Git Bash or WSL;
-the Mach-O routes do not apply.
+Most of its ready-made commands are written for macOS. On a Windows PC, run
+**`/leanrea-windows`** instead. It is Pakwone's own companion skill, with
+first moves for `.exe` and `.dll` files, Electron apps, .NET, Go, installers,
+APKs and SQLite, using Node, Python and PowerShell.
 
 ### Ask your agent
 
