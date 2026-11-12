@@ -22,7 +22,8 @@ upstream texts; they do not change [REA's MIT license](../LICENSE).
 
 Additional preserved originals live at
 [evmole/LICENSE](../third_party/evmole/LICENSE),
-[pwndbg/LICENSE.md](../third_party/pwndbg/LICENSE.md), and
+[pwndbg/LICENSE.md](../third_party/pwndbg/LICENSE.md),
+[leanrea/LICENSE](../third_party/leanrea/LICENSE), and
 [the website dinosaur notice](../website/public/assets/licenses/dinosaur.txt).
 
 ## Collection scope and maintenance
